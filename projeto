@@ -1,1 +1,356 @@
+# -*- coding: utf-8 -*-
+import pandas as pd
+import FreeSimpleGUI as sg
+from datetime import datetime, timedelta
+import os
+import csv  # ===== BIP
+import time  # ===== BIP
+from openpyxl.styles import Border, Side, Alignment, Font
 
+def obter_caminho():
+    # Salva diretamente na Área de Trabalho
+    return os.path.join(os.path.expanduser("~"), "Desktop")
+
+ARQUIVO = os.path.join(obter_caminho(), "controle_malotes_v85.xlsx")
+
+# LISTAS DE CIDADES
+C0=["AQUIDAUANA PI-07","BODOQUENA PI-15","BANDEIRANTES PI-20","CORUMBÁ PI-21","DOURADOS PI-28","JARDIM PI-39","MIRANDA PI-45","NAVIRAÍ PI-46","NOVA ANDRADINA PI-48","PONTA PORÃ PI-49","TRÊS LAGOAS PI-60","PORTO MURTINHO PI-66","LAGUNA CARAPÃ PI-81","POUPA TEMPO DOURADOS PI-85","DETRAN CORUMBÁ PI-98","SHOPPING TRÊS LAGOAS PI-101","DETRAN DOURADOS PI-102"]
+C1=["AMAMBAI PI-09","BATAYPORA PI-17","COXIM PI-23","FÁTIMA DO SUL PI-32","GLÓRIA DE DOURADOS PI-33","IGUATEMI PI-34","ITAQUIRAI PI-35","JATEÍ PI-40","MARACAJU PI-43","NIOAQUE PI-47","PARANAÍBA PI-50","RIO BRILHANTE PI-51","RIO NEGRO PI-53","RIBAS DO RIO PARDO PI-54","SELVÍRIA PI-56","SETE QUEDAS PI-57","VICENTINA PI-62","ANASTÁCIO PI-65","TERENOS PI-68","PEDRO GOMES PI-80","CHAPADÃO DO SUL PI-83","FIGUEIRÃO PI-88"]
+C2=["AQUIDAUANA PI-07","ARAL MOREIRA PI-11","ANTÔNIO JOÃO PI-12","BONITO PI-14","CORUMBÁ PI-21","CASSILÂNDIA PI-24","DOURADOS PI-28","DOURADINA PI-29","ELDORADO PI-31","JARDIM PI-39","NAVIRAÍ PI-46","NOVA ANDRADINA PI-48","PONTA PORÃ PI-49","RIO VERDE PI-52","TRÊS LAGOAS PI-60","ANAURILÂNDIA PI-67","CORGUINHO PI-69","JAPORÃ PI-70","SANTA RITA PI-78","CARACOL PI-82","CARTÓRIO DOURADINA PI-86","DETRAN CORUMBÁ PI-98"]
+C3=["AMAMBAI PI-09","APARECIDA DO TABOADO PI-10","ÁGUA CLARA PI-13","BATAGUASSU PI-16","BRASILÂNDIA PI-18","CAARAPÓ PI-22","DEODÁPOLIS PI-30","FÁTIMA DO SUL PI-32","IVINHEMA PI-36","INOCÊNCIA PI-37","MUNDO NOVO PI-44","SÃO GABRIEL PI-58","SIDROLÂNDIA PI-59","TACURU PI-61","NOVO HORIZONTE SUL","DOIS IRMÃOS PI-75","SONORA PI-77","ALCINÓPOLIS PI-79","PARAÍSO ÁGUAS PI-89"]
+C4=["ANGELICA PI-08","BELA VISTA PI-19","CAMAPUÃ PI-25","COSTA RICA PI-26","CORONEL SAPUCAIA PI-27","ITAPORÃ PI-38","JARAGUARI PI-41","LADÁRIO PI-42","PARANAIBA PI-50","ROCHEDO PI-55","GUIA LOPES PI-63","PARANHOS PI-64","NOVA ALVORADA PI-71","JUTI PI-73","TAQUARUSSU PI-76","DOURADOS PARQUE DO LAGO PI-109"]
+CAPITAL=["PATIO CENTRAL PI-02","SEJUV PI-03","AERO RANCHO PI-04","CEL. ANTONINO PI-05","BOSQUE DO IPÊS PI-06","GUAICURUS PI-72","CARTORIO ZAMPERILINI PI-87","CAORC PI-91","ITANHAGA PI-97","SHOPPING NORTE-SUL PI-99"]
+TODAS=sorted(list(set(C0+C1+C2+C3+C4+CAPITAL)))
+
+LISTAS = {
+    'SEG': list(C0),
+    'TER': list(C1),
+    'QUA': list(C2),
+    'QUI': list(C3),
+    'SEX': list(C4),
+    'CAP': list(CAPITAL),
+    'REC': sorted(list(TODAS))
+}
+
+# ===================== BIP: LEITOR DE CÓDIGO DE BARRAS (início) =====================
+# Código da etiqueta = 35 dígitos: [CEP(8) + fixo(8) + bloco do posto(9)] [00001] [nº do malote, 5 dígitos]
+# A "chave" do posto é tudo que vem antes dos 10 últimos dígitos. O vínculo chave -> posto
+# é aprendido sozinho (pergunta 1 vez) e gravado em postos_codigos.csv, na mesma pasta do Excel.
+ORIGEM_DIA = {'SEG': C0, 'TER': C1, 'QUA': C2, 'QUI': C3, 'SEX': C4, 'CAP': CAPITAL}
+ARQUIVO_CODIGOS = os.path.join(obter_caminho(), "postos_codigos.csv")
+
+def separar_codigo(bruto):
+    dig = ''.join(ch for ch in str(bruto) if ch in '0123456789')
+    if len(dig) != 35:
+        return None, None
+    return dig[:-10], str(int(dig[-5:]))
+
+def carregar_codigos():
+    mapa = {}
+    if os.path.exists(ARQUIVO_CODIGOS):
+        try:
+            with open(ARQUIVO_CODIGOS, newline='', encoding='utf-8-sig') as f:
+                for linha in csv.reader(f, delimiter=';'):
+                    if len(linha) >= 2 and linha[0].startswith('C') and linha[1].strip() in TODAS:
+                        mapa[linha[0][1:].strip()] = linha[1].strip()
+        except Exception as e:
+            print(f"Aviso: não consegui ler {ARQUIVO_CODIGOS}: {e}")
+    return mapa
+
+def salvar_codigo(chave, posto):
+    # só ACRESCENTA uma linha (nunca reescreve o arquivo), então não há risco de perder o cadastro
+    try:
+        novo = not os.path.exists(ARQUIVO_CODIGOS)
+        with open(ARQUIVO_CODIGOS, 'a', newline='', encoding='utf-8-sig') as f:
+            w = csv.writer(f, delimiter=';')
+            if novo:
+                w.writerow(['codigo', 'posto'])
+            w.writerow(['C' + chave, posto])  # o "C" na frente impede o Excel de estragar o número
+        return True
+    except Exception as e:
+        sg.popup_error(f"Não consegui gravar postos_codigos.csv (está aberto?).\nO vínculo vale só até fechar o programa.\n{e}")
+        return False
+
+def perguntar_posto(ml):
+    lay_p = [[sg.Text(f'Código novo (malote {ml}). Qual posto é este?', font=('Arial', 12, 'bold'))],
+             [sg.Text('Buscar:'), sg.Input(key='-F-', size=(45, 1), enable_events=True)],
+             [sg.Listbox(values=TODAS, size=(55, 12), key='-L-', font=('Arial', 11))],
+             [sg.Button('SALVAR VÍNCULO', key='-OK-'), sg.Button('CANCELAR', key='-CANC-')]]
+    w = sg.Window('Cadastrar código', lay_p, modal=True, finalize=True)
+    escolhido = None
+    while True:
+        ev, vl = w.read()
+        if ev in (None, '-CANC-'):
+            break
+        if ev == '-F-':
+            f = vl['-F-'].upper()
+            w['-L-'].update(values=[c for c in TODAS if f in c])
+        if ev == '-OK-':
+            if vl['-L-']:
+                escolhido = vl['-L-'][0]
+                break
+            sg.popup_error('Selecione um posto na lista!')
+    w.close()
+    return escolhido
+
+def foco_bip(janela, p):
+    try:
+        janela[f'BIP_{p}'].set_focus(force=True)
+    except Exception:
+        pass
+
+CODIGOS = carregar_codigos()
+ULT_BIP = {}   # hora do último dígito recebido em cada aba
+BIPADOS = set()   # (aba, data, nº malote) já registrados nesta sessão
+# ===================== BIP (fim) =====================
+
+hj_dt = datetime.now()
+data_hj = hj_dt.strftime('%d/%m/%Y')
+
+def proxima_data(dia_alvo):
+    dias_restantes = (dia_alvo - hj_dt.weekday()) % 7
+    if dias_restantes <= 0:
+        dias_restantes += 7
+    return (hj_dt + timedelta(days=dias_restantes)).strftime('%d/%m/%Y')
+
+DATAS_ENVIO = {
+    'SEG': proxima_data(0),
+    'TER': proxima_data(1),
+    'QUA': proxima_data(2),
+    'QUI': proxima_data(3),
+    'SEX': proxima_data(4),
+    'CAP': (hj_dt + timedelta(days=1 if hj_dt.weekday() < 4 else 3)).strftime('%d/%m/%Y'),
+    'REC': data_hj
+}
+
+sg.theme('LightBlue')
+
+def lay(t, d, lista, k):
+    linha_bip = [[sg.Text('BIPAR MALOTE:', font=('Arial', 12, 'bold')), sg.Input(key=f'BIP_{k}', size=(40,1), font=('Arial', 14), enable_events=True)]]  # ===== BIP
+    txt = "Total cadastrado" if k == 'REC' else "Restantes"
+    val = "0" if k == 'REC' else str(len(lista))
+    return [[sg.VPush()],
+            [sg.Text(f'{t}', font=('Arial', 22, 'bold'), text_color='darkblue')],
+            [sg.Text('Data Envio/Recebimento:', font=('Arial', 12, 'bold')), 
+             sg.Input(d, key=f'DATA_{k}', size=(12,1), font=('Arial', 12), justification='center')],
+            [sg.Text(f'{txt}: {val}', key=f'-COUNT_{k}-', font=('Arial', 14, 'bold'))],
+            [sg.Text('Servidor:', font=('Arial', 12)), sg.Input(key=f'S_{k}', size=(40,1))],
+            *linha_bip,
+            [sg.Listbox(values=lista, size=(80, 10), key=f'L_{k}', enable_events=True, font=('Arial', 11))],
+            [sg.Text('Destino/Origem:', font=('Arial', 12)), sg.Input(key=f'D_{k}', size=(60,1), readonly=True, background_color='#f0f0f0')],
+            [sg.Text('Nº Malote:', font=('Arial', 14, 'bold')), sg.Input(key=f'M_{k}', font=('Arial', 28, 'bold'), size=(12,1), justification='center')],
+            [sg.Button('REGISTRAR MALOTE', key=f'R_{k}', size=(30,2), button_color=('white', 'green'), font=('Arial', 14, 'bold'))],
+            [sg.Text('Busca Rápida:', font=('Arial', 12)), sg.Input(key=f'B_{k}', size=(40,1), enable_events=True)],
+            [sg.Text('', key=f'LOG_{k}', font=('Arial', 11, 'italic'), text_color='green')],
+            [sg.VPush()]]
+
+layout = [[sg.TabGroup([[
+    sg.Tab(' SEGUNDA ', [[sg.Column(lay('SEGUNDA-FEIRA', DATAS_ENVIO['SEG'], LISTAS['SEG'], 'SEG'), element_justification='center', expand_x=True, expand_y=True)]]),
+    sg.Tab(' TERÇA ', [[sg.Column(lay('TERÇA-FEIRA', DATAS_ENVIO['TER'], LISTAS['TER'], 'TER'), element_justification='center', expand_x=True, expand_y=True)]]),
+    sg.Tab(' QUARTA ', [[sg.Column(lay('QUARTA-FEIRA', DATAS_ENVIO['QUA'], LISTAS['QUA'], 'QUA'), element_justification='center', expand_x=True, expand_y=True)]]),
+    sg.Tab(' QUINTA ', [[sg.Column(lay('QUINTA-FEIRA', DATAS_ENVIO['QUI'], LISTAS['QUI'], 'QUI'), element_justification='center', expand_x=True, expand_y=True)]]),
+    sg.Tab(' SEXTA ', [[sg.Column(lay('SEXTA-FEIRA', DATAS_ENVIO['SEX'], LISTAS['SEX'], 'SEX'), element_justification='center', expand_x=True, expand_y=True)]]),
+    sg.Tab(' CAPITAL ', [[sg.Column(lay('CAPITAL', DATAS_ENVIO['CAP'], LISTAS['CAP'], 'CAP'), element_justification='center', expand_x=True, expand_y=True)]]),
+    sg.Tab(' RECEBIDOS ', [[sg.Column(lay('RECEBIDOS', DATAS_ENVIO['REC'], LISTAS['REC'], 'REC'), element_justification='center', expand_x=True, expand_y=True)]])
+]], key='-TABGROUP-', enable_events=True, expand_x=True, expand_y=True)],
+[sg.Push(), sg.Button('ABRIR EXCEL', size=(15,2)), 
+ sg.Button('PROTOCOLO INTERIOR', key='P_INT', size=(20,2), button_color='orange'), 
+ sg.Button('PROTOCOLO CAPITAL', key='P_CAP', size=(20,2), button_color='orange'), 
+ sg.Button('SAIR', size=(10,2), button_color='red'), sg.Push()]]
+
+window = sg.Window('Sistema Malotes', layout, finalize=True, resizable=True)
+window.maximize()
+for _k in ('SEG', 'TER', 'QUA', 'QUI', 'SEX', 'CAP', 'REC'):  # ===== BIP
+    window[f'BIP_{_k}'].bind('<Return>', '_ENTER')  # ===== BIP: o Enter do leitor gera o evento BIP_xxx_ENTER
+
+# Tira o foco do campo da data ao iniciar e coloca no Servidor
+window['S_SEG'].set_focus()
+
+cnt_rec = 0
+
+def obter_chave_aba(aba_nome):
+    if 'SEGUNDA' in aba_nome: return 'SEG'
+    if 'TERÇA' in aba_nome: return 'TER'
+    if 'QUARTA' in aba_nome: return 'QUA'
+    if 'QUINTA' in aba_nome: return 'QUI'
+    if 'SEXTA' in aba_nome: return 'SEX'
+    if 'CAPITAL' in aba_nome: return 'CAP'
+    return 'REC'
+
+while True:
+    event, values = window.read()
+    if event in (None, 'SAIR'): break
+
+    # Remove o foco do campo da data ao trocar de aba
+    if event == '-TABGROUP-':
+        chave = obter_chave_aba(values['-TABGROUP-'])
+        window[f'S_{chave}'].set_focus()
+
+    if event.startswith('L_'):
+        p = event.split('_')[1]
+        if values[event]:
+            window[f'D_{p}'].update(values[event][0])
+            window[f'M_{p}'].set_focus()
+
+    if event.startswith('B_'):
+        p = event.split('_')[1]
+        v = values[event].upper()
+        ref = LISTAS[p]
+        window[f'L_{p}'].update(values=[c for c in ref if v in c])
+
+    # ===== BIP: leitura do código de barras (automática: dispara sozinho ao completar 35 dígitos) =====
+    if event.startswith('BIP_'):
+        p = event.split('_')[1]
+        via_enter = event.endswith('_ENTER')
+        dig = ''.join(ch for ch in str(values.get(f'BIP_{p}') or '') if ch in '0123456789')
+        agora = time.time()
+        if not via_enter:
+            if 1 < len(dig) < 35 and agora - ULT_BIP.get(p, 0) > 2.0:
+                dig = dig[-1:]   # sobra antiga de leitura incompleta: recomeça só com o dígito novo
+                window[f'BIP_{p}'].update(dig)
+            ULT_BIP[p] = agora
+        if len(dig) < 35:
+            if via_enter and dig:   # o leitor mandou Enter, mas o código veio incompleto/diferente
+                window[f'BIP_{p}'].update('')
+                window[f'LOG_{p}'].update("⚠ Código incompleto ou diferente do padrão (esperado: 35 dígitos). Bipe de novo.", text_color='red')
+                foco_bip(window, p)
+            continue   # ainda chegando os dígitos: espera completar os 35
+        resto = dig[35:]   # se sobrou algo (bip seguinte já chegando), volta pro campo
+        window[f'BIP_{p}'].update(resto)
+        chave, ml = separar_codigo(dig[:35])
+        if not values[f'S_{p}'].strip():
+            window[f'BIP_{p}'].update('')
+            sg.popup_error("Preencha o nome do Servidor antes de bipar!")
+            window[f'S_{p}'].set_focus()
+            continue
+        posto = CODIGOS.get(chave)
+        if posto is None:
+            posto = perguntar_posto(ml)
+            if posto is None:
+                foco_bip(window, p)
+                continue
+            CODIGOS[chave] = posto
+            salvar_codigo(chave, posto)
+        data_reg = values[f'DATA_{p}'].strip()
+        aba_bip = 'Recebidos' if p == 'REC' else 'Enviados Capital' if p == 'CAP' else 'Enviados Interior'
+        if (aba_bip, data_reg, ml) in BIPADOS:
+            window[f'LOG_{p}'].update(f"⚠ Malote {ml} já foi registrado em {data_reg}. Nada foi feito.", text_color='red')
+            foco_bip(window, p)
+            continue
+        if p in ORIGEM_DIA and posto not in ORIGEM_DIA[p]:
+            if sg.popup_yes_no(f"{posto}\nNÃO faz parte desta aba.\n\nRegistrar mesmo assim?") != 'Yes':
+                foco_bip(window, p)
+                continue
+        window[f'LOG_{p}'].update(text_color='green')
+        window[f'D_{p}'].update(posto)
+        window[f'M_{p}'].update(ml)
+        window.write_event_value(f'R_{p}', None)   # dispara o REGISTRAR normal, com a mesma lógica de sempre
+        if len(resto) >= 35:
+            window.write_event_value(f'BIP_{p}_ENTER', None)   # já tem outro código completo esperando
+
+    if event.startswith('R_'):
+        p = event.split('_')[1]
+        aba_sh = 'Recebidos' if p == 'REC' else 'Enviados Capital' if p == 'CAP' else 'Enviados Interior'
+        dt, ml, sv = values[f'D_{p}'], values[f'M_{p}'].strip(), values[f'S_{p}'].strip().upper()
+        data_registro = values[f'DATA_{p}'].strip()
+
+        if not dt:
+            sg.popup_error("Selecione um Destino/Origem na lista!")
+            continue
+        if not sv:
+            sg.popup_error("Preencha o nome do Servidor!")
+            continue
+        if not ml:
+            sg.popup_error("Preencha o Nº do Malote!")
+            continue
+
+        try:
+            # Lê o histórico da aba escolhida[cite: 3]
+            try:
+                old = pd.read_excel(ARQUIVO, sheet_name=aba_sh)
+            except:
+                old = pd.DataFrame(columns=['Data', 'Posto', 'Malote', 'Servidor'])
+
+            if not old.empty and 'Malote' in old.columns:
+                old['Malote'] = old['Malote'].astype(str)
+
+            # Verifica se já existe registro do mesmo posto na mesma data[cite: 3]
+            mascara = (old['Data'] == data_registro) & (old['Posto'] == dt)
+
+            if mascara.any():
+                # Concatena o novo malote na mesma linha do Excel[cite: 3]
+                idx = old[mascara].index[0]
+                malotes_atuais = str(old.loc[idx, 'Malote'])
+                if ml not in malotes_atuais.split(', '):
+                    old.loc[idx, 'Malote'] = f"{malotes_atuais}, {ml}"
+                    old.loc[idx, 'Servidor'] = sv
+            else:
+                # Cria uma linha nova se for o primeiro malote do dia/posto[cite: 3]
+                novo = pd.DataFrame([{'Data': data_registro, 'Posto': dt, 'Malote': str(ml), 'Servidor': sv}])
+                old = pd.concat([old, novo], ignore_index=True)
+
+            # Salva no arquivo Excel[cite: 3]
+            with pd.ExcelWriter(ARQUIVO, engine='openpyxl', mode='a' if os.path.exists(ARQUIVO) else 'w', if_sheet_exists='replace' if os.path.exists(ARQUIVO) else None) as writer:
+                old.to_excel(writer, sheet_name=aba_sh, index=False)
+            
+            if p == 'REC':
+                cnt_rec += 1
+                window['-COUNT_REC-'].update(f'Total cadastrado: {cnt_rec}')
+            else:
+                if dt in LISTAS[p]:
+                    LISTAS[p].remove(dt)
+                window[f'L_{p}'].update(values=LISTAS[p])
+                window[f'-COUNT_{p}-'].update(f'Restantes: {len(LISTAS[p])}')
+            
+            window[f'LOG_{p}'].update(f"✔ Registrado para {dt} | Malote: {ml} ({data_registro})")
+            
+            window[f'M_{p}'].update('')
+            window[f'D_{p}'].update('')
+            window[f'B_{p}'].update('')
+            sg.popup_quick_message("✔ Registrado!", background_color='green')
+            BIPADOS.add((aba_sh, data_registro, ml))  # ===== BIP
+            foco_bip(window, p)  # ===== BIP
+        except Exception as e:
+            sg.popup_error(f"FECHE O EXCEL! Erro: {e}")
+
+    if event in ['P_INT', 'P_CAP', 'ABRIR EXCEL']:
+        if not os.path.exists(ARQUIVO):
+            sg.popup("O arquivo ainda não existe. Registre o primeiro malote primeiro!")
+            continue
+
+        if event == 'ABRIR EXCEL':
+            try: os.startfile(ARQUIVO)
+            except: sg.popup_error("Não foi possível abrir o arquivo.")
+            continue
+
+        ori = 'Enviados Interior' if event == 'P_INT' else 'Enviados Capital'
+        aba_p = 'PROTOCOLO ' + ('INTERIOR' if event == 'P_INT' else 'CAPITAL')
+        try:
+            df = pd.read_excel(ARQUIVO, sheet_name=ori)
+            
+            chave_atual = obter_chave_aba(values['-TABGROUP-'])
+            data_busca = values[f'DATA_{chave_atual}']
+            
+            hj = df[df['Data'] == data_busca][['Posto', 'Malote']]
+            if not hj.empty:
+                with pd.ExcelWriter(ARQUIVO, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
+                    hj.to_excel(writer, sheet_name=aba_p, index=False, startrow=2)
+                    ws = writer.sheets[aba_p]
+                    ws['A1'], ws['A2'] = f"MANIFESTO - {aba_p.split()[-1]}", f"DATA: {data_busca}"
+                    ws.merge_cells('A1:B1')
+                    ws['A1'].font = Font(bold=True, size=14); ws['A1'].alignment = Alignment(horizontal='center')
+                    fina = Side(style='thin')
+                    for r in ws.iter_rows(min_row=3, max_row=ws.max_row, min_col=1, max_col=2):
+                        for cell in r:
+                            cell.border = Border(left=fina, right=fina, top=fina, bottom=fina)
+                            cell.alignment = Alignment(horizontal='center')
+                    ws.column_dimensions['A'].width = 45; ws.column_dimensions['B'].width = 25
+                    ult_lin = ws.max_row + 2
+                    ws.cell(row=ult_lin, column=1, value=f"TOTAL DE MALOTES: {len(hj)}").font = Font(bold=True)
+                    ws.cell(row=ult_lin+3, column=1, value="_________________________________")
+                    ws.cell(row=ult_lin+4, column=1, value="ASSINATURA CORREIOS")
+                os.startfile(ARQUIVO)
+            else: sg.popup(f"Sem registros para a data {data_busca} neste protocolo!")
+        except Exception as e: sg.popup_error(f"Erro ao gerar protocolo! O Excel está aberto?\nDetalhes: {e}")
+
+window.close()
